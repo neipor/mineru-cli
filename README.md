@@ -22,12 +22,63 @@ echo "$(mineru scan.pdf)" | llm summarize
 
 ## Installation
 
+### Prebuilt binaries (recommended)
+
+Download from [GitHub Releases](https://github.com/neipor/mineru-cli/releases/latest):
+
+| Platform | File |
+|---|---|
+| macOS Apple Silicon | `mineru-aarch64-apple-darwin.tar.gz` |
+| macOS Intel | `mineru-x86_64-apple-darwin.tar.gz` |
+| macOS Universal | `mineru-universal-apple-darwin.tar.gz` |
+| Linux x86_64 | `mineru-x86_64-unknown-linux-musl.tar.gz` |
+| Linux ARM64 | `mineru-aarch64-unknown-linux-musl.tar.gz` |
+| Windows x86_64 | `mineru-x86_64-pc-windows-msvc.zip` |
+
 ```bash
-# Requires Rust 1.85+
-cargo install --path .
-# or build directly:
-cargo build --release
+# macOS Apple Silicon
+curl -L https://github.com/neipor/mineru-cli/releases/latest/download/mineru-aarch64-apple-darwin.tar.gz \
+  | tar -xz -C /usr/local/bin/
+```
+
+### OpenClaw / ClawHub
+
+```bash
+openclaw skills install mineru-ocr-cli
+# or
+clawhub install mineru-ocr-cli
+```
+
+### Build from source (requires Rust 1.85+)
+
+```bash
+git clone https://github.com/neipor/mineru-cli.git
+cd mineru-cli && cargo build --release
 cp target/release/mineru /usr/local/bin/
+```
+
+## 🌐 Network (China mainland / restricted regions)
+
+> HuggingFace (`hf.space`) is **blocked in mainland China** and some corporate networks.
+
+**Option 1 — System proxy** (Clash/V2Ray/etc.):
+```bash
+export HTTPS_PROXY=http://127.0.0.1:7890
+mineru document.pdf
+```
+
+**Option 2 — Custom server** (self-hosted or mirror):
+```bash
+export MINERU_SERVER_URL=https://your-mirror.example.com
+# or per-command:
+mineru document.pdf --server-url https://your-mirror.example.com
+```
+
+**Option 3 — Self-host MinerU** (requires CUDA GPU):
+```bash
+pip install mineru[full]
+python -m mineru.cli.gradio_app --server-name 0.0.0.0 --server-port 7860
+mineru document.pdf --server-url http://localhost:7860
 ```
 
 ## Usage
@@ -48,7 +99,9 @@ Options:
   -l, --lang <LANG>           OCR language [default: "ch (Chinese, English, Chinese Traditional)"]
   -b, --backend <BACKEND>     Processing backend [default: hybrid-auto-engine]
                               [possible values: pipeline, vlm-auto-engine, hybrid-auto-engine]
-  -o, --output-dir <DIR>      Save output files here (prints to stdout if omitted)
+  -o, --output-dir <DIR>      Save output files + images here (stdout if omitted)
+      --embed-images          Inline images as base64 data URIs
+      --server-url <URL>      Custom Gradio server URL [env: MINERU_SERVER_URL]
   -q, --quiet                 Suppress progress; only content goes to stdout
   -h, --help                  Print help
   -V, --version               Print version
