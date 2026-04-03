@@ -7,9 +7,12 @@ use crate::models::{ConversionResult, DocumentMeta, JsonOutput, OutputFormat};
 
 /// How to handle `![](images/xxx.jpg)` references in the output.
 pub enum ImageMode {
-    /// Keep the original relative paths unchanged (default for stdout).
+    /// Replace with compact text tags: `[📷 图片 1: xxx.jpg (45 KB)]`.
+    /// Default for stdout — tells the LLM "there is an image here" without bloating context.
+    Tag,
+    /// Keep the original relative paths unchanged.
     Keep,
-    /// Replace with `data:image/...;base64,...` URIs (for multimodal LLMs / self-contained HTML).
+    /// Replace with `data:image/...;base64,...` URIs (for vision-capable LLMs).
     Base64,
     /// Replace `images/` prefix with a custom prefix (for --output-dir mode).
     RelativePath { prefix: String },
@@ -41,6 +44,54 @@ pub fn render(
 
 // ─── Image rewriting ──────────────────────────────────────────────────────────
 
+/// Replace `![alt](images/fname)` with `[🖼 Image N: alt (X KB)]` text tags.
+fn replace_image_tags_with_text(
+    line: &str,
+    images: &std::collections::HashMap<String, Vec<u8>>,
+) -> String {
+    // Simple state-machine replacement of ![...](images/...) patterns.
+    let mut result = String::with_capacity(line.len());
+    let mut pos = 0;
+    let mut img_index = 0usize;
+    let bytes = line.as_bytes();
+
+    while pos < bytes.len() {
+        // Look for `![`
+        if pos + 1 < bytes.len() && bytes[pos] == b'!' && bytes[pos + 1] == b'[' {
+            if let Some(alt_end) = line[pos + 2..].find("](") {
+                let alt = &line[pos + 2..pos + 2 + alt_end];
+                let after_bracket = pos + 2 + alt_end + 2; // skip "]("
+                if let Some(path_end) = line[after_bracket..].find(')') {
+                    let img_path = &line[after_bracket..after_bracket + path_end];
+                    // Extract just the filename
+                    let fname = img_path
+                        .split('/')
+                        .last()
+                        .unwrap_or(img_path);
+                    let size_hint = images.get(fname)
+                        .map(|b| {
+                            let kb = b.len() / 1024;
+                            if kb == 0 { format!("{} B", b.len()) } else { format!("{kb} KB") }
+                        })
+                        .unwrap_or_default();
+                    img_index += 1;
+                    let label = if alt.is_empty() {
+                        format!("[🖼 Image {img_index}: {fname} {size_hint}]")
+                    } else {
+                        format!("[🖼 Image {img_index}: {alt} ({fname} {size_hint})]")
+                    };
+                    result.push_str(&label);
+                    pos = after_bracket + path_end + 1; // skip past ")"
+                    continue;
+                }
+            }
+        }
+        result.push(bytes[pos] as char);
+        pos += 1;
+    }
+    result
+}
+
 /// Rewrite `![alt](images/fname)` references according to the chosen ImageMode.
 fn rewrite_images(
     markdown: &str,
@@ -48,6 +99,17 @@ fn rewrite_images(
     mode: &ImageMode,
 ) -> String {
     match mode {
+        ImageMode::Tag => {
+            // Replace ![alt](images/fname) with a compact text tag for LLM context.
+            // Pattern: keep the alt text if present, add filename and file size.
+            let mut out = String::with_capacity(markdown.len());
+            for line in markdown.lines() {
+                let replaced = replace_image_tags_with_text(line, images);
+                out.push_str(&replaced);
+                out.push('\n');
+            }
+            out
+        }
         ImageMode::Keep => markdown.to_string(),
         ImageMode::RelativePath { prefix } => {
             // Replace `images/` prefix with the given prefix

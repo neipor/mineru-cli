@@ -75,6 +75,14 @@ struct Cli {
     /// Suppress progress output (useful when piping output)
     #[arg(short = 'q', long, default_value_t = false)]
     quiet: bool,
+
+    /// Custom Gradio server URL (default: MinerU HuggingFace Space).
+    /// Use this if HuggingFace is blocked in your region (e.g. mainland China).
+    /// Set HTTPS_PROXY / HTTP_PROXY for network-level proxy instead.
+    ///
+    /// Example: --server-url https://your-mineru-mirror.example.com
+    #[arg(long, default_value = api::DEFAULT_SPACE_BASE, env = "MINERU_SERVER_URL")]
+    server_url: String,
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
@@ -94,7 +102,9 @@ async fn main() -> Result<()> {
     let mut had_error = false;
 
     for file_path in &cli.files {
-        match process_file(&client, file_path, &cli).await {
+        // Normalize server URL: strip trailing slash
+        let server_url = cli.server_url.trim_end_matches('/');
+        match process_file(&client, file_path, &cli, server_url).await {
             Ok(()) => {}
             Err(e) => {
                 eprintln!("{} {}: {e:#}", style("✗").red().bold(), file_path.display());
@@ -111,7 +121,7 @@ async fn main() -> Result<()> {
 
 // ─── Per-file processing ──────────────────────────────────────────────────────
 
-async fn process_file(client: &Client, file_path: &Path, cli: &Cli) -> Result<()> {
+async fn process_file(client: &Client, file_path: &Path, cli: &Cli, server_url: &str) -> Result<()> {
     if !file_path.exists() {
         bail!("File not found: {}", file_path.display());
     }
@@ -141,7 +151,7 @@ async fn process_file(client: &Client, file_path: &Path, cli: &Cli) -> Result<()
     pb.set_message(format!("Uploading {file_name}…"));
 
     // ── Upload ────────────────────────────────────────────────────────────────
-    let gradio_file = api::upload_file(client, file_path)
+    let gradio_file = api::upload_file(client, file_path, server_url)
         .await
         .context("Upload failed")?;
 
@@ -157,13 +167,14 @@ async fn process_file(client: &Client, file_path: &Path, cli: &Cli) -> Result<()
         !cli.no_tables,
         &cli.lang,
         &cli.backend,
+        server_url,
     )
     .await
     .context("Failed to queue conversion job")?;
 
     // ── Stream result ─────────────────────────────────────────────────────────
     let pb_clone = pb.clone();
-    let result = api::stream_result(client, &session_hash, move |msg| {
+    let result = api::stream_result(client, &session_hash, server_url, move |msg| {
         pb_clone.set_message(format!("{}", style(msg).dim()));
     })
     .await

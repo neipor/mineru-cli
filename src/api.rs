@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use crate::models::{ConversionResult, GradioFile, OutputIndex, QueueJoinResponse, SseEvent};
 
-/// Base URL of the MinerU HuggingFace Space.
-pub const SPACE_BASE: &str = "https://opendatalab-mineru.hf.space";
+/// Default base URL of the MinerU HuggingFace Space.
+pub const DEFAULT_SPACE_BASE: &str = "https://opendatalab-mineru.hf.space";
 
 /// The `fn_index` of `convert_to_markdown_stream` in the Gradio dependency list.
 /// Derived by inspecting the Space config: dependency[8] = convert_to_markdown_stream.
@@ -19,7 +19,7 @@ pub const FN_INDEX: u32 = 8;
 // ─── Upload ───────────────────────────────────────────────────────────────────
 
 /// Upload a local file to the Gradio `/upload` endpoint.
-pub async fn upload_file(client: &Client, file_path: &Path) -> Result<GradioFile> {
+pub async fn upload_file(client: &Client, file_path: &Path, server_url: &str) -> Result<GradioFile> {
     let file_name = file_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -42,7 +42,7 @@ pub async fn upload_file(client: &Client, file_path: &Path) -> Result<GradioFile
 
     let form = reqwest::multipart::Form::new().part("files", part);
 
-    let url = format!("{SPACE_BASE}/gradio_api/upload");
+    let url = format!("{server_url}/gradio_api/upload");
     let resp = client
         .post(&url)
         .multipart(form)
@@ -60,7 +60,7 @@ pub async fn upload_file(client: &Client, file_path: &Path) -> Result<GradioFile
         .next()
         .context("Upload returned empty path list")?;
 
-    let file_url = format!("{SPACE_BASE}/gradio_api/file={remote_path}");
+    let file_url = format!("{server_url}/gradio_api/file={remote_path}");
 
     Ok(GradioFile {
         path: remote_path,
@@ -85,6 +85,7 @@ pub async fn queue_join(
     table_enable: bool,
     language: &str,
     backend: &str,
+    server_url: &str,
 ) -> Result<(String, String)> {
     let session_hash = Uuid::new_v4().simple().to_string()[..10].to_string();
 
@@ -107,7 +108,7 @@ pub async fn queue_join(
         "trigger_id": null
     });
 
-    let url = format!("{SPACE_BASE}/gradio_api/queue/join");
+    let url = format!("{server_url}/gradio_api/queue/join");
     let resp = client
         .post(&url)
         .json(&body)
@@ -132,9 +133,10 @@ pub async fn queue_join(
 pub async fn stream_result(
     client: &Client,
     session_hash: &str,
+    server_url: &str,
     on_status: impl Fn(&str),
 ) -> Result<ConversionResult> {
-    let url = format!("{SPACE_BASE}/gradio_api/queue/data?session_hash={session_hash}");
+    let url = format!("{server_url}/gradio_api/queue/data?session_hash={session_hash}");
 
     let resp = client
         .get(&url)
