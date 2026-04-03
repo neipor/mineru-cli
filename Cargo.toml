@@ -1,0 +1,26 @@
+[package]
+name = "mineru-cli"
+version = "0.1.0"
+edition = "2024"
+description = "CLI tool to extract text from PDFs, images, and documents using MinerU OCR, outputting LLM-friendly Markdown"
+
+[[bin]]
+name = "mineru"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["multipart", "stream", "json"] }
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+uuid = { version = "1", features = ["v4"] }
+indicatif = "0.17"
+mime_guess = "2"
+futures-util = "0.3"
+bytes = "1"
+tokio-util = { version = "0.7", features = ["io"] }
+chrono = { version = "0.4", features = ["serde"] }
+console = "0.15"
+zip = { version = "2", default-features = false, features = ["deflate"] }
