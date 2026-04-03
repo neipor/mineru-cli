@@ -23,6 +23,7 @@ use tokio::fs;
 ///   mineru scan.pdf --ocr --lang en
 ///   mineru report.pdf -f json -o ./output
 ///   mineru *.pdf --pages 5 --backend pipeline
+///   mineru doc.pdf --embed-images        # inline images as base64 (multimodal LLMs)
 #[derive(Parser, Debug)]
 #[command(name = "mineru", version, about, long_about = None)]
 struct Cli {
@@ -62,9 +63,14 @@ struct Cli {
           ]))]
     backend: String,
 
-    /// Save output to this directory (one file per input); prints to stdout if omitted
+    /// Save output to this directory (markdown + images/ folder extracted here)
     #[arg(short = 'o', long)]
     output_dir: Option<PathBuf>,
+
+    /// Inline images as base64 data URIs in the markdown (for multimodal LLMs / self-contained output).
+    /// When --output-dir is set, images are always saved as files instead.
+    #[arg(long, default_value_t = false)]
+    embed_images: bool,
 
     /// Suppress progress output (useful when piping output)
     #[arg(short = 'q', long, default_value_t = false)]
@@ -183,25 +189,59 @@ async fn process_file(client: &Client, file_path: &Path, cli: &Cli) -> Result<()
         language: cli.lang.clone(),
     };
 
-    let rendered = output::render(&result, &cli.format, file_path, &meta);
-
     match &cli.output_dir {
         Some(dir) => {
+            let stem = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+
+            // ── Save images/ sub-folder ────────────────────────────────────────
+            if !result.images.is_empty() {
+                let img_dir = dir.join(stem).join("images");
+                fs::create_dir_all(&img_dir).await
+                    .with_context(|| format!("Cannot create {}", img_dir.display()))?;
+                for (fname, bytes) in &result.images {
+                    let img_path = img_dir.join(fname);
+                    fs::write(&img_path, bytes).await
+                        .with_context(|| format!("Cannot write image {fname}"))?;
+                }
+                if !cli.quiet {
+                    eprintln!(
+                        "  📁 images/  ({} files → {})",
+                        result.images.len(),
+                        style(dir.join(stem).join("images").display()).dim()
+                    );
+                }
+            }
+
+            // ── Render markdown with relative image paths ──────────────────────
+            // Images are saved at <stem>/images/<file>, markdown at <stem>.<ext>,
+            // so the relative path from the md file is "<stem>/images/<file>".
+            let rendered = output::render(
+                &result,
+                &cli.format,
+                file_path,
+                &meta,
+                output::ImageMode::RelativePath { prefix: format!("{stem}/images") },
+            );
+
             let ext = match cli.format {
                 OutputFormat::Markdown => "md",
                 OutputFormat::Json => "json",
                 OutputFormat::Plain => "txt",
             };
-            let stem = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
             let out_path = dir.join(format!("{stem}.{ext}"));
-            fs::write(&out_path, &rendered)
-                .await
+            fs::write(&out_path, &rendered).await
                 .with_context(|| format!("Cannot write to {}", out_path.display()))?;
             if !cli.quiet {
                 eprintln!("  → {}", style(out_path.display()).underlined());
             }
         }
         None => {
+            let image_mode = if cli.embed_images {
+                output::ImageMode::Base64
+            } else {
+                output::ImageMode::Keep
+            };
+            let rendered = output::render(&result, &cli.format, file_path, &meta, image_mode);
             print!("{rendered}");
         }
     }

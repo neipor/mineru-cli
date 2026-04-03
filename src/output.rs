@@ -1,15 +1,27 @@
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::Utc;
 use std::path::Path;
 
 use crate::models::{ConversionResult, DocumentMeta, JsonOutput, OutputFormat};
 
-/// Render the conversion result into the requested output format,
-/// producing a string ready for stdout or file writing.
+/// How to handle `![](images/xxx.jpg)` references in the output.
+pub enum ImageMode {
+    /// Keep the original relative paths unchanged (default for stdout).
+    Keep,
+    /// Replace with `data:image/...;base64,...` URIs (for multimodal LLMs / self-contained HTML).
+    Base64,
+    /// Replace `images/` prefix with a custom prefix (for --output-dir mode).
+    RelativePath { prefix: String },
+}
+
+/// Render the conversion result into the requested output format.
 pub fn render(
     result: &ConversionResult,
     format: &OutputFormat,
     source_path: &Path,
     meta_params: &MetaParams,
+    image_mode: ImageMode,
 ) -> String {
     let markdown = result
         .markdown
@@ -18,10 +30,44 @@ pub fn render(
         .trim()
         .to_string();
 
+    let markdown = rewrite_images(&markdown, &result.images, &image_mode);
+
     match format {
         OutputFormat::Markdown => render_markdown(&markdown, source_path, meta_params),
         OutputFormat::Json => render_json(&markdown, result, source_path, meta_params),
         OutputFormat::Plain => render_plain(&markdown),
+    }
+}
+
+// ─── Image rewriting ──────────────────────────────────────────────────────────
+
+/// Rewrite `![alt](images/fname)` references according to the chosen ImageMode.
+fn rewrite_images(
+    markdown: &str,
+    images: &std::collections::HashMap<String, Vec<u8>>,
+    mode: &ImageMode,
+) -> String {
+    match mode {
+        ImageMode::Keep => markdown.to_string(),
+        ImageMode::RelativePath { prefix } => {
+            // Replace `images/` prefix with the given prefix
+            markdown.replace("](images/", &format!("]({prefix}/"))
+        }
+        ImageMode::Base64 => {
+            let mut out = markdown.to_string();
+            for (fname, bytes) in images {
+                let original_ref = format!("images/{fname}");
+                if out.contains(&original_ref) {
+                    let mime = mime_guess::from_path(fname)
+                        .first_or(mime_guess::mime::IMAGE_JPEG)
+                        .to_string();
+                    let b64 = BASE64.encode(bytes);
+                    let data_uri = format!("data:{mime};base64,{b64}");
+                    out = out.replace(&original_ref, &data_uri);
+                }
+            }
+            out
+        }
     }
 }
 
@@ -35,15 +81,12 @@ fn render_markdown(markdown: &str, source_path: &Path, meta: &MetaParams) -> Str
 
     let processed_at = Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
 
-    // Build LLM-friendly metadata block at the top
     let header = format!(
         "<!-- source: {file_name} | processed: {processed_at} | backend: {} | pages: {} -->",
         meta.backend, meta.pages
     );
 
-    // Clean up common OCR artefacts
     let clean = clean_markdown(markdown);
-
     format!("{header}\n\n{clean}")
 }
 
@@ -70,6 +113,7 @@ fn render_json(
         formula: meta.formula,
         table: meta.table,
         language: meta.language.clone(),
+        image_count: result.images.len(),
     };
 
     let output = JsonOutput {
@@ -84,15 +128,14 @@ fn render_json(
 // ─── Plain ────────────────────────────────────────────────────────────────────
 
 fn render_plain(markdown: &str) -> String {
-    let mut text = clean_markdown(markdown);
+    let text = clean_markdown(markdown);
 
-    // Remove Markdown headings (## -> blank)
-    let heading_re = ["######", "#####", "####", "###", "##", "#"];
+    // Strip Markdown headings
     let lines: Vec<String> = text
         .lines()
         .map(|line| {
             let mut l = line.to_string();
-            for prefix in &heading_re {
+            for prefix in &["######", "#####", "####", "###", "##", "#"] {
                 if l.starts_with(prefix) {
                     l = l.trim_start_matches('#').trim().to_string();
                     break;
@@ -102,10 +145,8 @@ fn render_plain(markdown: &str) -> String {
         })
         .collect();
 
-    // Remove Markdown formatting: **bold**, *italic*, `code`, ~~strikethrough~~
-    text = lines.join("\n");
-    text = remove_md_formatting(&text);
-    text
+    let text = lines.join("\n");
+    remove_md_formatting(&text)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -120,10 +161,6 @@ pub struct MetaParams {
     pub language: String,
 }
 
-/// Minimal cleanup of Gradio-generated markdown for LLM consumption:
-/// - Normalise excessive blank lines
-/// - Remove trailing whitespace
-/// - Preserve LaTeX math blocks (\\[ \\] and \\( \\))
 fn clean_markdown(markdown: &str) -> String {
     let mut out = String::with_capacity(markdown.len());
     let mut blank_count = 0usize;
@@ -132,7 +169,6 @@ fn clean_markdown(markdown: &str) -> String {
         let trimmed = line.trim_end();
         if trimmed.is_empty() {
             blank_count += 1;
-            // Allow at most two consecutive blank lines
             if blank_count <= 2 {
                 out.push('\n');
             }
@@ -147,27 +183,24 @@ fn clean_markdown(markdown: &str) -> String {
 }
 
 fn remove_md_formatting(text: &str) -> String {
-    // Very lightweight regex-free removal
     let mut s = text.to_string();
 
-    // Remove code fences
+    // Remove code fences, keeping content
     while let Some(start) = s.find("```") {
         if let Some(end) = s[start + 3..].find("```") {
-            let code_block = &s[start..start + 3 + end + 3].to_string();
-            // Keep the code content, strip the fences
+            let code_block = s[start..start + 3 + end + 3].to_string();
             let inner = &s[start + 3..start + 3 + end];
-            // Skip the language identifier on the first line
             let code_content = inner
                 .trim_start_matches(|c: char| c.is_alphabetic() || c == '_' || c == '-')
                 .trim_start_matches('\n')
                 .to_string();
-            s = s.replacen(code_block, &code_content, 1);
+            s = s.replacen(&code_block, &code_content, 1);
         } else {
             break;
         }
     }
 
-    // Remove bold/italic markers: **text** -> text, *text* -> text
+    // Strip **bold** and *italic*
     let mut result = String::with_capacity(s.len());
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
@@ -186,3 +219,4 @@ fn remove_md_formatting(text: &str) -> String {
 
     result
 }
+

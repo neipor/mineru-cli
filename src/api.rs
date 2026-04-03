@@ -166,15 +166,16 @@ pub async fn stream_result(
         }
     }
 
-    // If markdown is still missing but we have a ZIP URL, download and extract it
-    if result.markdown.is_none() {
-        if let Some(ref zip_url) = result.output_file_url.clone() {
-            if !zip_url.is_empty() {
-                match download_markdown_from_zip(client, zip_url).await {
-                    Ok(md) => result.markdown = Some(md),
-                    Err(e) => {
-                        eprintln!("\nWarning: could not extract markdown from ZIP: {e}");
-                    }
+    // Download and fully extract the result ZIP (markdown + images)
+    if let Some(ref zip_url) = result.output_file_url.clone() {
+        if !zip_url.is_empty() {
+            match download_and_extract_zip(client, zip_url).await {
+                Ok((md, images)) => {
+                    result.markdown = Some(md);
+                    result.images = images;
+                }
+                Err(e) => {
+                    eprintln!("\nWarning: could not extract ZIP: {e}");
                 }
             }
         }
@@ -385,8 +386,13 @@ fn extract_final_outputs(
 
 // ─── ZIP extraction ───────────────────────────────────────────────────────────
 
-/// Download the result ZIP and extract the first `.md` file found inside.
-pub async fn download_markdown_from_zip(client: &Client, zip_url: &str) -> Result<String> {
+/// Download the result ZIP and extract:
+/// - The `.md` file as a String
+/// - All `images/*` files as a map of filename → raw bytes
+pub async fn download_and_extract_zip(
+    client: &Client,
+    zip_url: &str,
+) -> Result<(String, std::collections::HashMap<String, Vec<u8>>)> {
     let resp = client
         .get(zip_url)
         .send()
@@ -398,41 +404,55 @@ pub async fn download_markdown_from_zip(client: &Client, zip_url: &str) -> Resul
     }
 
     let bytes = resp.bytes().await.context("Failed to read ZIP bytes")?;
-    extract_md_from_zip_bytes(&bytes)
+    extract_zip_contents(&bytes)
 }
 
-fn extract_md_from_zip_bytes(bytes: &[u8]) -> Result<String> {
+fn extract_zip_contents(
+    bytes: &[u8],
+) -> Result<(String, std::collections::HashMap<String, Vec<u8>>)> {
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(cursor).context("Invalid ZIP archive")?;
 
-    // Prefer auto.md → <name>.md → first .md found
-    let md_names: Vec<String> = (0..archive.len())
-        .filter_map(|i| {
-            let f = archive.by_index(i).ok()?;
-            let name = f.name().to_string();
-            if name.ends_with(".md") { Some(name) } else { None }
-        })
+    let mut markdown = String::new();
+    let mut images: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+
+    // Collect names first (borrow checker)
+    let names: Vec<String> = (0..archive.len())
+        .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
         .collect();
 
-    if md_names.is_empty() {
-        bail!("No .md file found in result ZIP");
+    for name in &names {
+        // Skip directory entries
+        if name.ends_with('/') {
+            continue;
+        }
+
+        let mut file = archive.by_name(name)
+            .with_context(|| format!("Cannot open {name} in ZIP"))?;
+
+        if name.ends_with(".md") && !name.contains('/') {
+            // Top-level .md file → main markdown content
+            file.read_to_string(&mut markdown)
+                .with_context(|| format!("Cannot read {name}"))?;
+        } else if name.starts_with("images/") {
+            // images/<hash>.jpg → extract filename only
+            let fname = name
+                .strip_prefix("images/")
+                .unwrap_or(name)
+                .to_string();
+            if !fname.is_empty() {
+                let mut buf = Vec::new();
+                std::io::Read::read_to_end(&mut file, &mut buf)
+                    .with_context(|| format!("Cannot read image {name}"))?;
+                images.insert(fname, buf);
+            }
+        }
+        // Other files (JSON, layout PDF, etc.) are silently skipped
     }
 
-    // Prefer files that are NOT in subdirectories (top-level .md)
-    let chosen = md_names
-        .iter()
-        .find(|n| !n.contains('/'))
-        .or_else(|| md_names.first())
-        .cloned()
-        .unwrap();
+    if markdown.is_empty() {
+        bail!("No top-level .md file found in result ZIP");
+    }
 
-    let mut file = archive
-        .by_name(&chosen)
-        .with_context(|| format!("Cannot open {chosen} in ZIP"))?;
-
-    let mut content = String::new();
-    file.read_to_string(&mut content)
-        .with_context(|| format!("Cannot read {chosen}"))?;
-
-    Ok(content)
+    Ok((markdown, images))
 }

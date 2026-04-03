@@ -61,9 +61,12 @@ impl OutputIndex {
 #[derive(Debug, Default)]
 pub struct ConversionResult {
     pub status_messages: Vec<String>,
+    /// Markdown content extracted from the ZIP's .md file.
     pub markdown: Option<String>,
-    pub output_file_path: Option<String>,
+    /// Images extracted from the ZIP's images/ folder: filename → raw bytes.
+    pub images: std::collections::HashMap<String, Vec<u8>>,
     pub output_file_url: Option<String>,
+    pub output_file_path: Option<String>,
     /// True once `process_completed` SSE event is received.
     pub completed: bool,
 }
@@ -92,6 +95,7 @@ pub struct DocumentMeta {
     pub formula: bool,
     pub table: bool,
     pub language: String,
+    pub image_count: usize,
 }
 
 /// Full structured output when format == Json.
