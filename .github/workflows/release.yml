@@ -95,6 +95,7 @@ jobs:
           mkdir "$STAGING"
           cp target/${{ matrix.target }}/release/mineru "$STAGING/"
           cp README.md "$STAGING/"
+          cp skill/SKILL.md "$STAGING/"
           tar czf "${STAGING}.tar.gz" "$STAGING"
           echo "ASSET=${STAGING}.tar.gz" >> "$GITHUB_ENV"
 
@@ -106,6 +107,7 @@ jobs:
           New-Item -ItemType Directory $staging
           Copy-Item "target\${{ matrix.target }}\release\mineru.exe" "$staging\"
           Copy-Item "README.md" "$staging\"
+          Copy-Item "skill\SKILL.md" "$staging\"
           Compress-Archive -Path "$staging\*" -DestinationPath "$staging.zip"
           "ASSET=$staging.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
 
@@ -152,6 +154,7 @@ jobs:
             dl/x86_64/mineru
           lipo -info "$STAGING/mineru"
           cp README.md "$STAGING/"
+          cp skill/SKILL.md "$STAGING/"
           tar czf "${STAGING}.tar.gz" "$STAGING"
           echo "ASSET=${STAGING}.tar.gz" >> "$GITHUB_ENV"
 

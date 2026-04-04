@@ -1,5 +1,10 @@
 # mineru-cli
 
+[![CI](https://github.com/neipor/mineru-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/neipor/mineru-cli/actions/workflows/ci.yml)
+[![Release](https://github.com/neipor/mineru-cli/actions/workflows/release.yml/badge.svg)](https://github.com/neipor/mineru-cli/actions/workflows/release.yml)
+[![Latest Release](https://img.shields.io/github/v/release/neipor/mineru-cli)](https://github.com/neipor/mineru-cli/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 A Rust CLI tool that extracts text from **PDFs, images, and Office documents** using the [MinerU OCR](https://huggingface.co/spaces/opendatalab/MinerU) HuggingFace Space, and outputs **LLM-friendly Markdown** (or JSON / plain text).
 
 ```
@@ -22,23 +27,69 @@ echo "$(mineru scan.pdf)" | llm summarize
 
 ## Installation
 
-### Prebuilt binaries (recommended)
+### One-liner install (macOS / Linux — recommended)
 
-Download from [GitHub Releases](https://github.com/neipor/mineru-cli/releases/latest):
-
-| Platform | File |
-|---|---|
-| macOS Apple Silicon | `mineru-aarch64-apple-darwin.tar.gz` |
-| macOS Intel | `mineru-x86_64-apple-darwin.tar.gz` |
-| macOS Universal | `mineru-universal-apple-darwin.tar.gz` |
-| Linux x86_64 | `mineru-x86_64-unknown-linux-musl.tar.gz` |
-| Linux ARM64 | `mineru-aarch64-unknown-linux-musl.tar.gz` |
-| Windows x86_64 | `mineru-x86_64-pc-windows-msvc.zip` |
+These commands download the binary and place it in `/usr/local/bin/` so it is
+immediately available on your `PATH`.
 
 ```bash
-# macOS Apple Silicon
-curl -L https://github.com/neipor/mineru-cli/releases/latest/download/mineru-aarch64-apple-darwin.tar.gz \
-  | tar -xz -C /usr/local/bin/
+# macOS — Universal binary (Intel + Apple Silicon)
+curl -fsSL https://github.com/neipor/mineru-cli/releases/latest/download/mineru-universal-apple-darwin.tar.gz \
+  | tar -xz --strip-components=1 -C /usr/local/bin/ mineru-*/mineru
+chmod +x /usr/local/bin/mineru && mineru --version
+```
+
+```bash
+# Linux x86_64  (static musl binary, no libc dependency)
+curl -fsSL https://github.com/neipor/mineru-cli/releases/latest/download/mineru-x86_64-unknown-linux-musl.tar.gz \
+  | tar -xz --strip-components=1 -C /usr/local/bin/ mineru-*/mineru
+chmod +x /usr/local/bin/mineru && mineru --version
+```
+
+```bash
+# Linux ARM64  (Raspberry Pi 4/5, AWS Graviton, Oracle Ampere, …)
+curl -fsSL https://github.com/neipor/mineru-cli/releases/latest/download/mineru-aarch64-unknown-linux-musl.tar.gz \
+  | tar -xz --strip-components=1 -C /usr/local/bin/ mineru-*/mineru
+chmod +x /usr/local/bin/mineru && mineru --version
+```
+
+> **No root?** Replace `/usr/local/bin/` with `$HOME/.local/bin/` and ensure
+> `export PATH="$HOME/.local/bin:$PATH"` is in your `~/.bashrc` / `~/.zshrc`.
+
+### Windows (PowerShell)
+
+```powershell
+$ver = (Invoke-RestMethod "https://api.github.com/repos/neipor/mineru-cli/releases/latest").tag_name
+$url = "https://github.com/neipor/mineru-cli/releases/download/$ver/mineru-$ver-x86_64-pc-windows-msvc.zip"
+Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\mineru.zip"
+Expand-Archive "$env:TEMP\mineru.zip" -DestinationPath "$env:TEMP\mineru-pkg" -Force
+
+# Install to %LOCALAPPDATA%\Programs\mineru and add to PATH
+$dest = "$env:LOCALAPPDATA\Programs\mineru"
+New-Item -ItemType Directory -Force $dest | Out-Null
+Copy-Item "$env:TEMP\mineru-pkg\*\mineru.exe" $dest
+$cur = [Environment]::GetEnvironmentVariable("Path","User")
+if ($cur -notlike "*$dest*") {
+    [Environment]::SetEnvironmentVariable("Path","$cur;$dest","User")
+    Write-Host "Restart your terminal to use mineru."
+}
+& "$dest\mineru.exe" --version
+```
+
+### cargo install (requires Rust 1.85+)
+
+```bash
+# Install from crates.io — binary lands in ~/.cargo/bin/ (already on PATH)
+cargo install mineru-cli
+
+# Or build from source
+git clone https://github.com/neipor/mineru-cli.git
+cd mineru-cli
+cargo build --release
+# System-wide:
+sudo cp target/release/mineru /usr/local/bin/
+# User-level (no root):
+cp target/release/mineru ~/.local/bin/
 ```
 
 ### OpenClaw / ClawHub
@@ -49,13 +100,16 @@ openclaw skills install mineru-ocr-cli
 clawhub install mineru-ocr-cli
 ```
 
-### Build from source (requires Rust 1.85+)
+### Available binaries
 
-```bash
-git clone https://github.com/neipor/mineru-cli.git
-cd mineru-cli && cargo build --release
-cp target/release/mineru /usr/local/bin/
-```
+| Platform | Architecture | File |
+|---|---|---|
+| macOS Universal | Intel + Apple Silicon | `mineru-*-universal-apple-darwin.tar.gz` |
+| macOS | Apple Silicon (M1/M2/M3/M4) | `mineru-*-aarch64-apple-darwin.tar.gz` |
+| macOS | Intel | `mineru-*-x86_64-apple-darwin.tar.gz` |
+| Linux | x86_64 (static musl) | `mineru-*-x86_64-unknown-linux-musl.tar.gz` |
+| Linux | ARM64 (static musl) | `mineru-*-aarch64-unknown-linux-musl.tar.gz` |
+| Windows | x86_64 | `mineru-*-x86_64-pc-windows-msvc.zip` |
 
 ## 🌐 Network (China mainland / restricted regions)
 
