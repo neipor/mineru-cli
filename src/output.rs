@@ -10,8 +10,6 @@ pub enum ImageMode {
     /// Replace with compact text tags: `[📷 图片 1: xxx.jpg (45 KB)]`.
     /// Default for stdout — tells the LLM "there is an image here" without bloating context.
     Tag,
-    /// Keep the original relative paths unchanged.
-    Keep,
     /// Replace with `data:image/...;base64,...` URIs (for vision-capable LLMs).
     Base64,
     /// Replace `images/` prefix with a custom prefix (for --output-dir mode).
@@ -26,12 +24,7 @@ pub fn render(
     meta_params: &MetaParams,
     image_mode: ImageMode,
 ) -> String {
-    let markdown = result
-        .markdown
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let markdown = result.markdown.as_deref().unwrap_or("").trim().to_string();
 
     let markdown = rewrite_images(&markdown, &result.images, &image_mode);
 
@@ -57,33 +50,37 @@ fn replace_image_tags_with_text(
 
     while pos < bytes.len() {
         // Look for `![`
-        if pos + 1 < bytes.len() && bytes[pos] == b'!' && bytes[pos + 1] == b'[' {
-            if let Some(alt_end) = line[pos + 2..].find("](") {
-                let alt = &line[pos + 2..pos + 2 + alt_end];
-                let after_bracket = pos + 2 + alt_end + 2; // skip "]("
-                if let Some(path_end) = line[after_bracket..].find(')') {
-                    let img_path = &line[after_bracket..after_bracket + path_end];
-                    // Extract just the filename
-                    let fname = img_path
-                        .split('/')
-                        .last()
-                        .unwrap_or(img_path);
-                    let size_hint = images.get(fname)
-                        .map(|b| {
-                            let kb = b.len() / 1024;
-                            if kb == 0 { format!("{} B", b.len()) } else { format!("{kb} KB") }
-                        })
-                        .unwrap_or_default();
-                    img_index += 1;
-                    let label = if alt.is_empty() {
-                        format!("[🖼 Image {img_index}: {fname} {size_hint}]")
-                    } else {
-                        format!("[🖼 Image {img_index}: {alt} ({fname} {size_hint})]")
-                    };
-                    result.push_str(&label);
-                    pos = after_bracket + path_end + 1; // skip past ")"
-                    continue;
-                }
+        if pos + 1 < bytes.len()
+            && bytes[pos] == b'!'
+            && bytes[pos + 1] == b'['
+            && let Some(alt_end) = line[pos + 2..].find("](")
+        {
+            let alt = &line[pos + 2..pos + 2 + alt_end];
+            let after_bracket = pos + 2 + alt_end + 2; // skip "]("
+            if let Some(path_end) = line[after_bracket..].find(')') {
+                let img_path = &line[after_bracket..after_bracket + path_end];
+                // Extract just the filename
+                let fname = img_path.split('/').next_back().unwrap_or(img_path);
+                let size_hint = images
+                    .get(fname)
+                    .map(|b| {
+                        let kb = b.len() / 1024;
+                        if kb == 0 {
+                            format!("{} B", b.len())
+                        } else {
+                            format!("{kb} KB")
+                        }
+                    })
+                    .unwrap_or_default();
+                img_index += 1;
+                let label = if alt.is_empty() {
+                    format!("[🖼 Image {img_index}: {fname} {size_hint}]")
+                } else {
+                    format!("[🖼 Image {img_index}: {alt} ({fname} {size_hint})]")
+                };
+                result.push_str(&label);
+                pos = after_bracket + path_end + 1; // skip past ")"
+                continue;
             }
         }
         result.push(bytes[pos] as char);
@@ -110,7 +107,6 @@ fn rewrite_images(
             }
             out
         }
-        ImageMode::Keep => markdown.to_string(),
         ImageMode::RelativePath { prefix } => {
             // Replace `images/` prefix with the given prefix
             markdown.replace("](images/", &format!("]({prefix}/"))
@@ -281,4 +277,3 @@ fn remove_md_formatting(text: &str) -> String {
 
     result
 }
-

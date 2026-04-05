@@ -7,7 +7,9 @@ use std::io::Read;
 use std::path::Path;
 use uuid::Uuid;
 
-use crate::models::{ConversionResult, GradioFile, OutputIndex, QueueJoinResponse, SseEvent};
+use crate::models::{
+    ConversionParams, ConversionResult, GradioFile, OutputIndex, QueueJoinResponse, SseEvent,
+};
 
 /// Default base URL of the MinerU HuggingFace Space.
 pub const DEFAULT_SPACE_BASE: &str = "https://opendatalab-mineru.hf.space";
@@ -19,7 +21,11 @@ pub const FN_INDEX: u32 = 8;
 // ─── Upload ───────────────────────────────────────────────────────────────────
 
 /// Upload a local file to the Gradio `/upload` endpoint.
-pub async fn upload_file(client: &Client, file_path: &Path, server_url: &str) -> Result<GradioFile> {
+pub async fn upload_file(
+    client: &Client,
+    file_path: &Path,
+    server_url: &str,
+) -> Result<GradioFile> {
     let file_name = file_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -54,7 +60,10 @@ pub async fn upload_file(client: &Client, file_path: &Path, server_url: &str) ->
         bail!("Upload failed with status {}", resp.status());
     }
 
-    let paths: Vec<String> = resp.json().await.context("Failed to parse upload response")?;
+    let paths: Vec<String> = resp
+        .json()
+        .await
+        .context("Failed to parse upload response")?;
     let remote_path = paths
         .into_iter()
         .next()
@@ -79,24 +88,19 @@ pub async fn upload_file(client: &Client, file_path: &Path, server_url: &str) ->
 pub async fn queue_join(
     client: &Client,
     file: &GradioFile,
-    max_pages: u32,
-    is_ocr: bool,
-    formula_enable: bool,
-    table_enable: bool,
-    language: &str,
-    backend: &str,
+    params: &ConversionParams<'_>,
     server_url: &str,
 ) -> Result<(String, String)> {
     let session_hash = Uuid::new_v4().simple().to_string()[..10].to_string();
 
     let data = serde_json::json!([
         serde_json::to_value(file)?,
-        max_pages,
-        is_ocr,
-        formula_enable,
-        table_enable,
-        language,
-        backend,
+        params.max_pages,
+        params.is_ocr,
+        params.formula_enable,
+        params.table_enable,
+        params.language,
+        params.backend,
         "http://localhost:30000"
     ]);
 
@@ -122,8 +126,10 @@ pub async fn queue_join(
         bail!("Queue join failed ({status}): {text}");
     }
 
-    let join_resp: QueueJoinResponse =
-        resp.json().await.context("Failed to parse queue join response")?;
+    let join_resp: QueueJoinResponse = resp
+        .json()
+        .await
+        .context("Failed to parse queue join response")?;
     Ok((join_resp.event_id, session_hash))
 }
 
@@ -169,16 +175,16 @@ pub async fn stream_result(
     }
 
     // Download and fully extract the result ZIP (markdown + images)
-    if let Some(ref zip_url) = result.output_file_url.clone() {
-        if !zip_url.is_empty() {
-            match download_and_extract_zip(client, zip_url).await {
-                Ok((md, images)) => {
-                    result.markdown = Some(md);
-                    result.images = images;
-                }
-                Err(e) => {
-                    eprintln!("\nWarning: could not extract ZIP: {e}");
-                }
+    if let Some(ref zip_url) = result.output_file_url.clone()
+        && !zip_url.is_empty()
+    {
+        match download_and_extract_zip(client, zip_url).await {
+            Ok((md, images)) => {
+                result.markdown = Some(md);
+                result.images = images;
+            }
+            Err(e) => {
+                eprintln!("\nWarning: could not extract ZIP: {e}");
             }
         }
     }
@@ -235,17 +241,17 @@ fn process_sse_message(
         }
         "process_completed" => {
             if !event.success {
-                if let Some(output) = &event.output {
-                    if let Some(err) = &output.error {
-                        bail!("Conversion failed: {err}");
-                    }
+                if let Some(output) = &event.output
+                    && let Some(err) = &output.error
+                {
+                    bail!("Conversion failed: {err}");
                 }
                 bail!("Conversion failed (success=false)");
             }
-            if let Some(output) = &event.output {
-                if let Some(data) = &output.data {
-                    extract_final_outputs(data, result, on_status);
-                }
+            if let Some(output) = &event.output
+                && let Some(data) = &output.data
+            {
+                extract_final_outputs(data, result, on_status);
             }
             result.completed = true;
             return Ok(true);
@@ -288,8 +294,10 @@ fn extract_status_from_patch(
             "append" => op_arr.get(2).and_then(Value::as_str),
             "replace" => {
                 // "replace" gives the full accumulated text; take the last line
-                op_arr.get(2).and_then(Value::as_str)
-                    .and_then(|s| s.lines().last())
+                op_arr
+                    .get(2)
+                    .and_then(Value::as_str)
+                    .and_then(|s| s.lines().next_back())
             }
             _ => None,
         };
@@ -299,7 +307,11 @@ fn extract_status_from_patch(
             if stripped.is_empty() {
                 continue;
             }
-            let last = result.status_messages.last().map(|s| s.as_str()).unwrap_or("");
+            let last = result
+                .status_messages
+                .last()
+                .map(|s| s.as_str())
+                .unwrap_or("");
             // Deduplicate; also collapse repetitive "Processing on server (x.xs)" into one entry
             let is_server_tick = stripped.starts_with("Processing on server (");
             let last_is_server_tick = last.starts_with("Processing on server (");
@@ -326,14 +338,14 @@ fn extract_file_from_patch(data: &[Value], result: &mut ConversionResult) {
                 continue;
             };
             let kind = op_arr.first().and_then(Value::as_str).unwrap_or("");
-            if kind == "replace" {
-                if let Some(obj) = op_arr.get(2) {
-                    if let Some(url) = obj.pointer("/url").and_then(Value::as_str) {
-                        result.output_file_url = Some(url.to_string());
-                    }
-                    if let Some(path) = obj.pointer("/path").and_then(Value::as_str) {
-                        result.output_file_path = Some(path.to_string());
-                    }
+            if kind == "replace"
+                && let Some(obj) = op_arr.get(2)
+            {
+                if let Some(url) = obj.pointer("/url").and_then(Value::as_str) {
+                    result.output_file_url = Some(url.to_string());
+                }
+                if let Some(path) = obj.pointer("/path").and_then(Value::as_str) {
+                    result.output_file_path = Some(path.to_string());
                 }
             }
         }
@@ -342,47 +354,41 @@ fn extract_file_from_patch(data: &[Value], result: &mut ConversionResult) {
 
 /// Extract all final values from the `process_completed` data array.
 /// In this event, values are plain (string/dict), not patch operations.
-fn extract_final_outputs(
-    data: &[Value],
-    result: &mut ConversionResult,
-    on_status: &impl Fn(&str),
-) {
+fn extract_final_outputs(data: &[Value], result: &mut ConversionResult, on_status: &impl Fn(&str)) {
     // data[0]: status string
-    if let Some(s) = data.get(OutputIndex::STATUS).and_then(Value::as_str) {
-        if let Some(last_line) = s.lines().last() {
-            if result.status_messages.last().map(|x| x.as_str()) != Some(last_line) {
-                result.status_messages.push(last_line.to_string());
-                on_status(last_line);
-            }
-        }
+    if let Some(s) = data.get(OutputIndex::STATUS).and_then(Value::as_str)
+        && let Some(last_line) = s.lines().next_back()
+        && result.status_messages.last().map(|x| x.as_str()) != Some(last_line)
+    {
+        result.status_messages.push(last_line.to_string());
+        on_status(last_line);
     }
 
     // data[1]: output file descriptor
-    if let Some(file_obj) = data.get(OutputIndex::OUTPUT_FILE) {
-        if !file_obj.is_null() {
-            if let Some(url) = file_obj.pointer("/url").and_then(Value::as_str) {
-                result.output_file_url = Some(url.to_string());
-            }
-            if let Some(path) = file_obj.pointer("/path").and_then(Value::as_str) {
-                result.output_file_path = Some(path.to_string());
-            }
+    if let Some(file_obj) = data.get(OutputIndex::OUTPUT_FILE)
+        && !file_obj.is_null()
+    {
+        if let Some(url) = file_obj.pointer("/url").and_then(Value::as_str) {
+            result.output_file_url = Some(url.to_string());
+        }
+        if let Some(path) = file_obj.pointer("/path").and_then(Value::as_str) {
+            result.output_file_path = Some(path.to_string());
         }
     }
 
     // data[3]: md_text (raw markdown; may be empty for simple docs)
-    if let Some(s) = data.get(OutputIndex::MD_TEXT).and_then(Value::as_str) {
-        if !s.is_empty() {
-            result.markdown = Some(s.to_string());
-        }
+    if let Some(s) = data.get(OutputIndex::MD_TEXT).and_then(Value::as_str)
+        && !s.is_empty()
+    {
+        result.markdown = Some(s.to_string());
     }
 
     // data[2]: md_render fallback
-    if result.markdown.is_none() {
-        if let Some(s) = data.get(OutputIndex::MD_RENDER).and_then(Value::as_str) {
-            if !s.is_empty() {
-                result.markdown = Some(s.to_string());
-            }
-        }
+    if result.markdown.is_none()
+        && let Some(s) = data.get(OutputIndex::MD_RENDER).and_then(Value::as_str)
+        && !s.is_empty()
+    {
+        result.markdown = Some(s.to_string());
     }
 }
 
@@ -429,7 +435,8 @@ fn extract_zip_contents(
             continue;
         }
 
-        let mut file = archive.by_name(name)
+        let mut file = archive
+            .by_name(name)
             .with_context(|| format!("Cannot open {name} in ZIP"))?;
 
         if name.ends_with(".md") && !name.contains('/') {
@@ -438,10 +445,7 @@ fn extract_zip_contents(
                 .with_context(|| format!("Cannot read {name}"))?;
         } else if name.starts_with("images/") {
             // images/<hash>.jpg → extract filename only
-            let fname = name
-                .strip_prefix("images/")
-                .unwrap_or(name)
-                .to_string();
+            let fname = name.strip_prefix("images/").unwrap_or(name).to_string();
             if !fname.is_empty() {
                 let mut buf = Vec::new();
                 std::io::Read::read_to_end(&mut file, &mut buf)

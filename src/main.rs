@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
-use models::OutputFormat;
+use models::{ConversionParams, OutputFormat};
 use output::MetaParams;
 use reqwest::Client;
 use std::path::{Path, PathBuf};
@@ -52,7 +52,11 @@ struct Cli {
     no_tables: bool,
 
     /// OCR language code, e.g. "ch", "en", "fr"
-    #[arg(short = 'l', long, default_value = "ch (Chinese, English, Chinese Traditional)")]
+    #[arg(
+        short = 'l',
+        long,
+        default_value = "ch (Chinese, English, Chinese Traditional)"
+    )]
     lang: String,
 
     /// Processing backend
@@ -121,7 +125,12 @@ async fn main() -> Result<()> {
 
 // ─── Per-file processing ──────────────────────────────────────────────────────
 
-async fn process_file(client: &Client, file_path: &Path, cli: &Cli, server_url: &str) -> Result<()> {
+async fn process_file(
+    client: &Client,
+    file_path: &Path,
+    cli: &Cli,
+    server_url: &str,
+) -> Result<()> {
     if !file_path.exists() {
         bail!("File not found: {}", file_path.display());
     }
@@ -158,19 +167,17 @@ async fn process_file(client: &Client, file_path: &Path, cli: &Cli, server_url: 
     pb.set_message(format!("Queuing {file_name}…"));
 
     // ── Queue join ────────────────────────────────────────────────────────────
-    let (_event_id, session_hash) = api::queue_join(
-        client,
-        &gradio_file,
-        cli.pages,
-        cli.ocr,
-        !cli.no_formulas,
-        !cli.no_tables,
-        &cli.lang,
-        &cli.backend,
-        server_url,
-    )
-    .await
-    .context("Failed to queue conversion job")?;
+    let params = ConversionParams {
+        max_pages: cli.pages,
+        is_ocr: cli.ocr,
+        formula_enable: !cli.no_formulas,
+        table_enable: !cli.no_tables,
+        language: &cli.lang,
+        backend: &cli.backend,
+    };
+    let (_event_id, session_hash) = api::queue_join(client, &gradio_file, &params, server_url)
+        .await
+        .context("Failed to queue conversion job")?;
 
     // ── Stream result ─────────────────────────────────────────────────────────
     let pb_clone = pb.clone();
@@ -183,11 +190,7 @@ async fn process_file(client: &Client, file_path: &Path, cli: &Cli, server_url: 
     pb.finish_and_clear();
 
     if !cli.quiet {
-        eprintln!(
-            "{} {}",
-            style("✓").green().bold(),
-            style(&file_name).bold()
-        );
+        eprintln!("{} {}", style("✓").green().bold(), style(&file_name).bold());
     }
 
     // ── Render output ─────────────────────────────────────────────────────────
@@ -202,16 +205,21 @@ async fn process_file(client: &Client, file_path: &Path, cli: &Cli, server_url: 
 
     match &cli.output_dir {
         Some(dir) => {
-            let stem = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+            let stem = file_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("output");
 
             // ── Save images/ sub-folder ────────────────────────────────────────
             if !result.images.is_empty() {
                 let img_dir = dir.join(stem).join("images");
-                fs::create_dir_all(&img_dir).await
+                fs::create_dir_all(&img_dir)
+                    .await
                     .with_context(|| format!("Cannot create {}", img_dir.display()))?;
                 for (fname, bytes) in &result.images {
                     let img_path = img_dir.join(fname);
-                    fs::write(&img_path, bytes).await
+                    fs::write(&img_path, bytes)
+                        .await
                         .with_context(|| format!("Cannot write image {fname}"))?;
                 }
                 if !cli.quiet {
@@ -231,7 +239,9 @@ async fn process_file(client: &Client, file_path: &Path, cli: &Cli, server_url: 
                 &cli.format,
                 file_path,
                 &meta,
-                output::ImageMode::RelativePath { prefix: format!("{stem}/images") },
+                output::ImageMode::RelativePath {
+                    prefix: format!("{stem}/images"),
+                },
             );
 
             let ext = match cli.format {
@@ -240,7 +250,8 @@ async fn process_file(client: &Client, file_path: &Path, cli: &Cli, server_url: 
                 OutputFormat::Plain => "txt",
             };
             let out_path = dir.join(format!("{stem}.{ext}"));
-            fs::write(&out_path, &rendered).await
+            fs::write(&out_path, &rendered)
+                .await
                 .with_context(|| format!("Cannot write to {}", out_path.display()))?;
             if !cli.quiet {
                 eprintln!("  → {}", style(out_path.display()).underlined());
@@ -250,7 +261,7 @@ async fn process_file(client: &Client, file_path: &Path, cli: &Cli, server_url: 
             let image_mode = if cli.embed_images {
                 output::ImageMode::Base64
             } else {
-                output::ImageMode::Keep
+                output::ImageMode::Tag
             };
             let rendered = output::render(&result, &cli.format, file_path, &meta, image_mode);
             print!("{rendered}");
@@ -273,8 +284,7 @@ fn build_client() -> Result<Client> {
 
 fn validate_extension(path: &Path) -> Result<()> {
     const SUPPORTED: &[&str] = &[
-        "pdf", "docx", "doc", "ppt", "pptx",
-        "png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif",
+        "pdf", "docx", "doc", "ppt", "pptx", "png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif",
     ];
     let ext = path
         .extension()

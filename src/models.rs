@@ -71,6 +71,18 @@ pub struct ConversionResult {
     pub completed: bool,
 }
 
+// ─── Conversion Parameters ────────────────────────────────────────────────────
+
+/// Parameters for a single conversion job sent to the Gradio queue.
+pub struct ConversionParams<'a> {
+    pub max_pages: u32,
+    pub is_ocr: bool,
+    pub formula_enable: bool,
+    pub table_enable: bool,
+    pub language: &'a str,
+    pub backend: &'a str,
+}
+
 // ─── Output Formats ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, clap::ValueEnum, Default)]

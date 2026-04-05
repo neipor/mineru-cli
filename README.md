@@ -27,10 +27,30 @@ echo "$(mineru scan.pdf)" | llm summarize
 
 ## Installation
 
-### One-liner install (macOS / Linux — recommended)
+### Build from source (recommended — requires Rust 1.85+)
 
-These commands download the binary and place it in `/usr/local/bin/` so it is
-immediately available on your `PATH`.
+```bash
+git clone https://github.com/neipor/mineru-cli.git
+cd mineru-cli
+cargo build --release
+# System-wide:
+sudo cp target/release/mineru /usr/local/bin/
+# User-level (no root):
+cp target/release/mineru ~/.local/bin/
+```
+
+> **Tip:** If Rust is not installed, get it from <https://rustup.rs/>.
+
+### cargo install
+
+```bash
+# Install from crates.io — binary lands in ~/.cargo/bin/ (already on PATH)
+cargo install mineru-cli
+```
+
+### Pre-built binaries (macOS / Linux)
+
+These commands download the pre-built binary and place it in `/usr/local/bin/`.
 
 ```bash
 # macOS — Universal binary (Intel + Apple Silicon)
@@ -74,22 +94,6 @@ if ($cur -notlike "*$dest*") {
     Write-Host "Restart your terminal to use mineru."
 }
 & "$dest\mineru.exe" --version
-```
-
-### cargo install (requires Rust 1.85+)
-
-```bash
-# Install from crates.io — binary lands in ~/.cargo/bin/ (already on PATH)
-cargo install mineru-cli
-
-# Or build from source
-git clone https://github.com/neipor/mineru-cli.git
-cd mineru-cli
-cargo build --release
-# System-wide:
-sudo cp target/release/mineru /usr/local/bin/
-# User-level (no root):
-cp target/release/mineru ~/.local/bin/
 ```
 
 ### OpenClaw / ClawHub
